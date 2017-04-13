@@ -17,7 +17,7 @@
 
 #include "mm.h"
 #include "memlib.h"
-
+//hi
 /*********************************************************
  * NOTE TO STUDENTS: Before you do anything else, please
  * provide your team information in the following struct.
@@ -78,7 +78,7 @@ static void * heap_start;	/* points to first block in heap */
 static void * coalesce(void * bp)
 {
     if (GET_ALLOC(HDRP(bp))) 	/* in case accidentally called on an allocated block */
-	return bp;
+		return bp;
 
     size_t size = GET_SIZE(HDRP(bp));       /* allocations and sizes of the 3 bloc */
     int prev_alloc = GET_ALLOC(HDRP(PREV_BLKP(bp)));
@@ -87,7 +87,7 @@ static void * coalesce(void * bp)
     size_t next_size = GET_SIZE(HDRP(NEXT_BLKP(bp)));
 
     if (prev_alloc && next_alloc) /* case 1, no free blocks to coalesce */
-	return bp;
+		return bp;
     
     else if(prev_alloc && !next_alloc) /* case 2; occupied previous block, empty next block */
 	{
@@ -122,10 +122,10 @@ static void * extend_heap(size_t words)
     size = (words % 2) ? (words + 1) * WSIZE : words * WSIZE; /* padding added to payload size */
 
     if((long)(p = mem_sbrk(size)) == -1)
-	return NULL;
+		return NULL;
 
     /* TEST */
-    //        printf("\n%d this is size\n", size);
+	//            printf("\nEXTENDING HEAP\n%d this is size\n", size);
     /* TEST END */
 
     PUT(HDRP(p), PACK(size, 0));	 /* header for new block; overwrites previous epilogue*/
@@ -154,28 +154,25 @@ static void * find_fit(size_t size)
 	{
 	    curr_alloc = GET_ALLOC(HDRP(curr_ptr));
 	    curr_size = GET_SIZE(HDRP(curr_ptr));
-	    max_fit = curr_size - DSIZE;           /* gotta subtract out the footer/header */
+		if(curr_size == 0)                     /* check if at epilogue */
+			break;
 
-	    /* TEST */
-	    //	    if(curr_size == 0)
-	    //	{
-	    //	    printf("\nthe size of this block is 0, you're at epi or else error...\n");
-	    //	    break;
-	    //	}
-	    /* END TEST */
+	    max_fit = curr_size - DSIZE;           /* gotta subtract out the footer/header */	
 
-	    if(!curr_alloc && (size <= max_fit)) /* block can fit the request */
+		if(!curr_alloc && (size <= max_fit))   /* block can fit the request */
 		{
 		    /* TEST */
-		    //	    printf("fit was found in find_fit because %d is LESS THAN %d \n", size,
-		    //	   max_fit);
+			//		printf("\nFIT FOUND\n%d is LESS THAN %d \n", size, max_fit);
 		    /* TEST END */
 		    return curr_ptr;
 		}
-
+		
 	    curr_ptr = NEXT_BLKP(curr_ptr); /* get pointer to word after next block header */
 	}
-    
+
+	/* TEST */
+	//	printf("\nFIT NOT FOUND\n");
+	/* TEST END */
     return NULL; 		/* no blocks available */
 }
 
@@ -190,7 +187,7 @@ static void * place(void *bp, size_t size)
     char *split_bp;			 /* address of bp of leftover space block */
     
     if((split_size == 0) || (split_size < DSIZE)) /* when leftover space too small for hdr/ftr */
-	return bp;
+		return bp;
 
     PUT(HDRP(bp), PACK(size, 1));
     PUT(FTRP(bp), PACK(size, 1));
@@ -202,43 +199,6 @@ static void * place(void *bp, size_t size)
     return bp;
 }
 
-/* 
- *  prints out info on the current heap
- */
-void test_heap()
-{
-    int heap_size = mem_heapsize();
-    void *first = heap_list_p;
-    void *last = mem_heap_hi();
-    printf("First byte heap = %p    Last byte heap = %p    Size of heap = %d\n", first,
-	   last, heap_size);
-    sleep(1);
-    int total_blocks = 0;
-    int free_blocks = 0;
-    size_t curr_size;
-    size_t curr_alloc;
-
-    while(first < last)
-	{
-	    curr_size = GET_SIZE(HDRP(first));
-	    curr_alloc = GET_ALLOC(FTRP(first));
-	    if(!curr_alloc)
-		{
-		    free_blocks++;
-		}
-	    total_blocks++;
-	    printf("[BLOCK %d SIZE = %d ALLO = %d]\n", total_blocks, curr_size, curr_alloc);
-	    first += curr_size;
-
-	    
-	}
-    printf("Total free blocks = %d\nTotal blocks = %d\n\n", free_blocks, total_blocks);
-	    sleep(1);    
-}
-
-/* 
- * prints contents of header and footer of block bp on a single output line
- */
 void myprintblock(char * bp)
 {
     size_t sizeH = GET_SIZE(HDRP(bp));
@@ -247,7 +207,7 @@ void myprintblock(char * bp)
     int allocF = GET_ALLOC(FTRP(bp));
     printf("\n[H- S = %d -- A = %d ]", sizeH, allocH);
     printf("[ ---- PAYLOAD OF SIZE %d  ---- ]", sizeH);
-    printf("[F- S = %d -- A = %d]\n", sizeF, allocF);
+    printf("[F- S = %d -- A = %d]", sizeF, allocF);
 }
 
 /* consistency checking, make sure all headers and footers have equal block sizes/allocated bits,
@@ -260,24 +220,37 @@ void mycheckblock(char * bp)
     size_t sizeF = GET_SIZE(FTRP(bp));
     int allocF = GET_ALLOC(FTRP(bp));
     if(sizeH != sizeF)
-	printf("Header size does not equal footer size\n");
+		printf("Header size does not equal footer size\n");
     if(allocH != allocF)
-	printf("Allocs do not match!\n");
+		printf("Allocs do not match!\n");
 
     int ali = (unsigned int)bp % WSIZE;
     if(ali)
-	printf("alignment is off, the modulus of bp and WSIZE is %d\n", ali);
+		printf("alignment is off, the modulus of bp and WSIZE is %d\n", ali);
     return;
 }
 
 void myheapcheck()
 {
-    char *bp;
+    int heap_size = mem_heapsize(); /* number of bytes in heap */
+    int total_blocks = 1;			/* all blocks in  */
+    int free_blocks = 0;		    /*  */
+	char *bp;
+	printf("\nsize of prologue = %d\n", GET_SIZE(HDRP(heap_list_p)));
     for (bp = heap_list_p; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp))
 	{
+	    if(!GET_ALLOC(HDRP(bp)))
+			free_blocks++;
+			
 	    myprintblock(bp);
 	    mycheckblock(bp);
+		total_blocks++;
 	}
+	
+	printf("\nFirst byte heap = %p    Last byte heap = %p    Size of heap = %d\n", heap_list_p,
+	   heap_list_e, heap_size);
+    printf("\nTotal free blocks = %d\nTotal blocks = %d\n\n", free_blocks, total_blocks);
+	//	sleep(2);    
 }
 
 /* 
@@ -285,27 +258,19 @@ void myheapcheck()
  */
 int mm_init(void)
 {
-
     /* creates the beginning of the heap */
     if ((heap_list_p = mem_sbrk(4 * WSIZE)) == (void *)-1)
-	return -1;
+		return -1;
     
-    PUT(heap_list_p, 0);		                   /* Alignment padding */
+    PUT(heap_list_p, 0);		                    /* Alignment padding */
     PUT(heap_list_p + (1 * WSIZE), PACK(DSIZE, 1)); /* Prologue header */
     PUT(heap_list_p + (2 * WSIZE), PACK(DSIZE, 1)); /* Prologue footer */
     PUT(heap_list_p + (3 * WSIZE), PACK(0, 1));     /* Epilogue header */
-    heap_list_p += (1 * WSIZE);			    /* heap_list_p is now set at prologue header */
+    heap_list_p += (2 * WSIZE);			            /* heap_list_p is now set at prologue header */
 
     /* Extend the empty heap with a free block of CHUNKSIZE bytes */
     if((heap_start = extend_heap(CHUNKSIZE/WSIZE)) == NULL)
-	return -1;
-
-    /* TEST */
-    //    printf("\n\n\n %d  %p  %p %p  \n", mem_heapsize(), heap_start, mem_heap_lo(), mem_heap_hi());
-    //    printf("%d    %d   \n", GET_SIZE(HDRP(heap_start)), mem_heap_hi() - mem_heap_lo());
-    //    printf("%p    %d  %d \n", heap_list_p, GET_SIZE(heap_list_p), GET_SIZE(NEXT_BLKP(heap_list_p)));
-     // sleep(30);
-    /* TEST END */
+		return -1;
 
     return 0;
 }
@@ -335,12 +300,11 @@ void *mm_malloc(size_t size)
     char *bp;			/* pointer that will eventually point to new block and be returned */
     
     /* TESTING */
-    //    test_heap();
     //    printf("\n\ntrying to malloc a block of size %d  \n total heap size is %d \n", 
     //	    size, mem_heapsize());
     /* TEST END */
 
-    if(size < DSIZE) 		/* need to make sure header/footer will fit */
+    if(size <= DSIZE) 		/* need to make sure header/footer will fit */
 	{
 	    adj_size = 2*DSIZE;
 	}
@@ -349,33 +313,26 @@ void *mm_malloc(size_t size)
 	    adj_size = DSIZE * ((size + (DSIZE) + (DSIZE-1)) /  DSIZE);
 	}
 
+	/* TEST */
+	//	        myheapcheck();
+    /* TEST END */
+	
     /* now search free list for a fit */
     if((bp = find_fit(adj_size)) != NULL)
 	{
-	    /* TEST */
-	    //	    printf("Between find_fit and place\n");
-	    //if(adj_size == 31520)
-	    //	test_heap();
-	    /* TEST END */
 	    place(bp, adj_size);
-	    return bp;
+		return bp;
 	}
 
     /* no fit found; get more memory and place block */
     exp_size = MAX(adj_size, CHUNKSIZE);
 
-    /* Test */
-    //    printf("fit not found, extending \n");
-    /* TEST END */
-
-    if((bp = extend_heap(exp_size/WSIZE)) == NULL)
-	return NULL; 		/* out of memory */
+	if((bp = extend_heap(exp_size/WSIZE)) == NULL)
+		return NULL; 		/* out of memory */
     
     place(bp, adj_size); 	/* sets up header/footer for new block */
 
-    /* TEST */
-        myheapcheck();
-    /* TEST END */
+	
 
     return bp;
 }
