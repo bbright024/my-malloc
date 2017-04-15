@@ -63,8 +63,8 @@ team_t team = {
 #define PUT(p, val)         (*(unsigned int *)(p) = (val))
 
 /* Read and write 8 bytes at address p */
-#define GET_PTRP(p)         (*(unsigned long *)(p))
-#define PUT_PTRP(p, val)         (*(unsigned long *)(p) = ((unsigned long)(val)))
+#define GET_PTRP(p)         (*(size_t *)(p))
+#define PUT_PTRP(p, val)    (*(size_t *)(p) = (size_t)(val))
 
 /* Read the size and allocated status fields from address p */
 #define GET_SIZE(p)         (GET(p) & ~0x7)
@@ -85,7 +85,7 @@ team_t team = {
 #define PREV_BLKP(bp)       ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE)))
 
 /* Given block ptr bp in free list, compute address of next and prev free list blocks */
-#define SUCC_FREP(bp)       ((char *)GET_PTRP(SUCC(bp)))
+#define SUCC_FREP(bp)       ((char *)GET_PTRP(bp))
 #define PRED_FREP(bp)       ((char *)GET_PTRP(PRED(bp)))
 
 static void * heap_list_p; 	/* points to prologue header  */
@@ -97,6 +97,10 @@ static void * free_list_r;	/* Root node of free list */
 //static size_t tot_payload_request;
 //static size_t internal_frag;
 
+/* function prototypes */
+
+void mm_print_free();
+
 /* 
  *  removes the block at bp from the free list and rearranges the pointers
  *  in that block
@@ -104,17 +108,33 @@ static void * free_list_r;	/* Root node of free list */
 static void remove_block(void *bp)
 {
 
-	char *list_p = PRED_FREP(bp);         /* block prior to bp in free list */
-	char *third_bp = SUCC_FREP(bp);       /* pointer to block following bp in free list */
-	
-	if(list_p == NULL) 			          /* bp was first block in free list */
-		free_list_r = third_bp;           /* assign the root to point to block after bp */
-	else
-		PUT_PTRP(SUCC(list_p), third_bp); /* change node prior to bp to skip bp */
+	char *pred = PRED_FREP(bp);         /* block prior to bp in free list */
+	char *succ = SUCC_FREP(bp);       /* pointer to block following bp in free list */
 
-	if(third_bp != NULL) 		          /* bp not last node in free list */
-		PUT_PTRP(PRED(third_bp), list_p); /* change block after bp's prev node pointer */
+	/* zero out the pointers */
+	PUT_PTRP(PRED(bp), NULL);
+	PUT_PTRP(SUCC(bp), NULL);
 	
+	if((pred == NULL)  && (succ == NULL)) /* case 1: bp was only block */
+		{
+			free_list_r = NULL;           /* assign the root to point to block after bp */
+			
+		}
+	else if(pred == NULL) 		/* case 2: bp was first block of n blocks */
+		{
+			free_list_r = succ;
+		}
+    else if(succ == NULL) 		/* case 3: bp was last block of n blocks*/
+		{
+			PUT_PTRP(SUCC(pred), NULL);
+		}
+
+	else						/* case 4: bp was in between 2 blocks */
+		{
+			PUT_PTRP(SUCC(pred), succ);
+			PUT_PTRP(PRED(succ), pred);
+		}
+
 }
 
 /* 
@@ -123,17 +143,17 @@ static void remove_block(void *bp)
  */
 static void add_block(void *bp)
 {
+	/* zero out ptr areas */
+	PUT_PTRP(PRED(bp), NULL);
+	PUT_PTRP(SUCC(bp), NULL);
+
 	char *old_first = free_list_r; /* first free block in list */
 
 	/* set up new first block in free list */
 	free_list_r = bp;
-	PUT_PTRP(PRED(bp), NULL);
 	
 	if(old_first == NULL)			 /* list was empty */
-		{
-			PUT_PTRP(SUCC(bp), NULL);
-			return;
-		}
+		return;
 
 	PUT_PTRP(SUCC(bp), old_first);
 	PUT_PTRP(PRED(old_first), bp);	/* bp now has a pointer back to list_p  */
@@ -144,45 +164,70 @@ static void add_block(void *bp)
  */
 static void * coalesce(void * bp)
 {
-    if (GET_ALLOC(HDRP(bp))) 	       /* in case accidentally called on allocated bp */
-		return bp;
-
     size_t size = GET_SIZE(HDRP(bp));  /* allocations and sizes of the 3 blocs involved */
+	char *next_bp;
+	char *prev_bp;
     int prev_alloc = GET_PREV_ALLOC(HDRP(bp));
     int next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
     size_t prev_size;
     size_t next_size;
 	size_t pre_pre_alloc;	/* only use if starting from at least heap_start; wont work with hlp */
+
 	
     if (prev_alloc && next_alloc)      /* case 1, no free blocks to coalesce */
-		return bp;
-    
+		{
+			return bp;
+		}
     else if(prev_alloc && !next_alloc) /* case 2; occupied previous block, empty next block */
 	{
-		size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
+		next_bp = NEXT_BLKP(bp);
+		
+		/* fix up the implicit stuff */
+		size += GET_SIZE(HDRP(next_bp));
 	    PUT(HDRP(bp), PACK(size, 2, 0));
 	    PUT(FTRP(bp), PACK(size, 2, 0));
+
+		/* grab next block's free list pointers */
+		//PUT_PTRP(SUCC(bp), SUCC_FREP(next_bp));
+		//		PUT_PTRP(PRED(bp), PRED_FREP(next_bp));
+
+		/* change predecessor pointer of block after next */
+		//		if(SUCC_FREP(bp) != NULL)
+		//	PUT_PTRP(PRED(SUCC_FREP(bp)), bp); 
 	}
 
     else if(!prev_alloc && next_alloc) /* case 3; free prev block, occupied next block */
 	{
-		size += GET_SIZE(HDRP(PREV_BLKP(bp)));
+		prev_bp = PREV_BLKP(bp);
+		size += GET_SIZE(HDRP(prev_bp));
 		pre_pre_alloc = GET_PREV_ALLOC(HDRP(PREV_BLKP(bp)));
 
+		/* implicit stuff */
 		PUT(FTRP(bp), PACK(size, pre_pre_alloc, 0));
 	    PUT(HDRP(PREV_BLKP(bp)), PACK(size, pre_pre_alloc, 0));
 	    bp = PREV_BLKP(bp);
+		/* no free list changes; new block becomes part of prev block */
 	}
+	
     else 	                   		   /* case 4: both previous and next block free */
 	{
+		/* stitch out next block's ptrs.  */
+		
 		next_size = GET_SIZE(FTRP(NEXT_BLKP(bp)));
 		prev_size = GET_SIZE(HDRP(PREV_BLKP(bp)));
 	    size += prev_size + next_size;
 		pre_pre_alloc = GET_PREV_ALLOC(HDRP(PREV_BLKP(bp)));
 
-	    PUT(HDRP(PREV_BLKP(bp)), PACK(size, pre_pre_alloc, 0));
+
+
+		PUT(HDRP(PREV_BLKP(bp)), PACK(size, pre_pre_alloc, 0));
 		PUT(FTRP(NEXT_BLKP(bp)), PACK(size, pre_pre_alloc, 0)); 
-	    bp = PREV_BLKP(bp);
+
+
+		bp = PREV_BLKP(bp);
+
+		
+		
 	}
     return bp;
 }
@@ -235,12 +280,15 @@ static void * extend_heap(size_t words)
  */
 static void * find_fit(size_t size)
 {
-    char *bp;
-	
-    for (bp = free_list_r; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp))
+    char *bp;// = free_list_r;
+	//mm_print_free();
+	//	while(bp != NULL)
+	for (bp = heap_list_p; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp))
 		{
 			if(!GET_ALLOC(HDRP(bp)) && (size < GET_SIZE(HDRP(bp))))
 					return bp;
+
+			//		bp = SUCC_FREP(bp);
 		}
 
     return NULL; 		/* no blocks available */
@@ -275,7 +323,6 @@ static void * place(void *bp, size_t size)
 	PUT(HDRP(bp), PACK(size, prev_alloc, 1));
 
 	/* remove block from free list */
-	remove_block(bp);
 
 	next_blk = NEXT_BLKP(bp);
 
@@ -286,8 +333,7 @@ static void * place(void *bp, size_t size)
 			PUT(FTRP(next_blk), PACK(split_size, 2, 0));
 
 			/* split block added to free list */
-			add_block(next_blk);
-			
+
 			/* dont forget block after the split to update prev_alloc */
 			next_blk = NEXT_BLKP(next_blk); 
 		}
@@ -313,7 +359,8 @@ void mm_print_free()
 	size_t prev_alloc;
 	char *succ;
 	char *pred;
-	
+	int i = 0;
+	printf("\n\n\n");
 	while(bp != NULL)
 		{
 			size = GET_SIZE(HDRP(bp));
@@ -322,14 +369,16 @@ void mm_print_free()
 			succ = SUCC_FREP(bp);
 			pred = PRED_FREP(bp);
 			
-			printf("\n[Head-- PrevAll = %d -- All = %d ]", prev_alloc, alloc);
-			printf("[ Successor = %#lx ][Predecessor = %#lx ]", (unsigned long)succ, (unsigned long)pred);
+			printf("\n[Head][BP = %p ", bp);
+			printf(" Successor = %#lx ][Predecessor = %#lx ]", (unsigned long)succ, (unsigned long)pred);
 			printf("[ ---- BLOCK SIZE %d  ---- ]\n", size);
 
-			
+			i++;
 			bp = SUCC_FREP(bp);
 		}
-	
+	printf("\n\n There are %d nodes in free list\n", i);
+	sleep(1);
+
 }
 void myprintblock(char * bp)
 {
@@ -355,11 +404,11 @@ void myprintblock(char * bp)
 void mycheckblock(char * bp)
 {
 
-	printf("\n\n\n\n\n ");
+	
     size_t sizeH = GET_SIZE(HDRP(bp));
     size_t allocH = GET_ALLOC(HDRP(bp));
 	size_t prev_alloc = GET_PREV_ALLOC(HDRP(bp));
-	mm_print_free();
+	
 	if(!allocH)
 		{
 			size_t sizeF = GET_SIZE(FTRP(bp));
@@ -368,6 +417,7 @@ void mycheckblock(char * bp)
 			if(sizeH != sizeF)
 				{
 					printf("\nHeader size does not equal footer size\n");
+					printf("%d    %d \n",  sizeH, sizeF);
 					sleep(1);
 				}
 			if(allocF != allocH)
@@ -400,21 +450,22 @@ void mm_check()
 	char *bp;
 	//size_t payloads = tot_payload_request;
 
+	//	printf("\n\n\n ");
     for (bp = heap_list_p; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp))
 	{
 	    if(!GET_ALLOC(HDRP(bp)))
 			free_blocks++;
 			
-		myprintblock(bp);
-	    mycheckblock(bp);
-		total_blocks++;
+		//		myprintblock(bp);
+	    //mycheckblock(bp);
+			total_blocks++;
 	}
-	
+	//	mm_print_free();
 	//	printf("\nFirst byte heap = %p    Last byte heap = %p    Size of heap = %d\n", heap_list_p,
 	// heap_list_e, heap_size);
-	//    printf("Total free blocks = %d\nTotal blocks = %d\n", free_blocks, total_blocks);
+	//	printf("Total free blocks = %d\nTotal blocks = %d\n", free_blocks, total_blocks);
 
-		sleep(1);    
+	//	sleep(1);    
 }
 
 /* 
@@ -429,17 +480,14 @@ int mm_init(void)
     PUT(heap_list_p, 0);		                    /* Alignment padding */
     PUT(heap_list_p + (1 * WSIZE), PACK(DSIZE, 2, 1)); /* Prologue header */
     PUT(heap_list_p + (2 * WSIZE), PACK(DSIZE, 2, 1)); /* Prologue footer */
-    PUT(heap_list_p + (3 * WSIZE), PACK(0, 2, 1));     /* Epilogue header */
+	PUT(heap_list_p + (3 * WSIZE), PACK(0, 2, 1));     /* Epilogue header */
     heap_list_p += (2 * WSIZE);			            /* heap_list_p is now set at prologue header */
 	heap_list_e = HDRP(NEXT_BLKP(heap_list_p));
 
     /* Extend the empty heap with a free block of CHUNKSIZE bytes */
 	if((heap_start = extend_heap(CHUNKSIZE/WSIZE)) == NULL)
 		return -1;
-
-	add_block(heap_start);
-	
-    return 0;
+	return 0;
 }
 
 /* 
@@ -448,6 +496,7 @@ int mm_init(void)
  */
 void *mm_malloc(size_t size)
 {
+
     if (size == 0)
 		return NULL;
 
@@ -464,7 +513,7 @@ void *mm_malloc(size_t size)
 	    adj_size = WSIZE * ((size + (WSIZE) + (WSIZE-1)) /  WSIZE);
 	}
 
-	bp = find_fit(adj_size); 	
+	//bp = find_fit(adj_size); 	
 	/* deferred coalescing */
 	/* 
 	if(bp == NULL)				
@@ -473,16 +522,12 @@ void *mm_malloc(size_t size)
 			bp = find_fit(adj_size);
 		}
 	 */
-    if(bp != NULL) 				/* there is enough space */
+    if((bp = find_fit(adj_size)) != NULL) 				/* there is enough space */
 		{
 			place(bp, adj_size);
-			
 			/* TEST HEAP */
-												mm_check();
-			//internal_frag = adj_size - size;
-			//printf("Infrag = %d\nPayload = %d\nBlock size = %d\n", internal_frag, size, adj_size);
+			mm_check();
 			/* TEST END */
-			
 			return bp;
 		}
 
@@ -494,11 +539,8 @@ void *mm_malloc(size_t size)
     
     place(bp, adj_size); 	/* sets up header/footer for new block */
 	/* TEST HEAP */
-
-			mm_check();
-	//internal_frag = adj_size - size;
-	//printf("Infrag = %d\nPayload = %d\nBlock size = %d\n", internal_frag, size, adj_size);
-    /* TEST END */
+	mm_check();
+	/* TEST END */
 
 	return bp;
 }
@@ -532,11 +574,13 @@ void mm_free(void *bp)
     PUT(HDRP(bp), PACK(size, prev_alloc, 0));
     PUT(FTRP(bp), PACK(size, prev_alloc, 0));
 
-	/* if commented out, using deferred coalescing */
-	bp = coalesce(bp);
-
 	/* set pointers in the new free block to be in the free list */
-	add_block(bp);
+
+	/* if commented out, using deferred coalescing */
+	coalesce(bp);
+
+
+
 }
 
 /*
