@@ -58,35 +58,35 @@ team_t team = {
 /* Pack a size, previous block allocated bit, and allocated bit into a word */
 #define PACK(size, prev_alloc, alloc)   ((size) | (prev_alloc) | (alloc))
 
-/* Read and write an unsigned int at address p */
+/* Read and write 4 bytes at address p */
 #define GET(p)              (*(unsigned int *)(p))
 #define PUT(p, val)         (*(unsigned int *)(p) = (val))
 
-/* Read and write a pointer at address p */
-#define GET_PTRP(p)         (*(char *)(p))
-#define PUT_PTRP(p, val)    (*(char *)(p) = (val))
+/* Read and write 8 bytes at address p */
+#define GET_PTRP(p)         (*(unsigned long *)(p))
+#define PUT_PTRP(p, val)         (*(unsigned long *)(p) = ((unsigned long)(val)))
 
 /* Read the size and allocated status fields from address p */
 #define GET_SIZE(p)         (GET(p) & ~0x7)
 #define GET_ALLOC(p)        (GET(p) & 0x1)
 #define GET_PREV_ALLOC(p)   (GET(p) & 0x2)
-
+	
 /* Given block ptr bp, compute address of its header and footer */
 #define HDRP(bp)            ((char *)(bp) - WSIZE)
 #define FTRP(bp)            ((char *)(bp) + GET_SIZE(HDRP(bp)) - DSIZE)
 
-/* Given block ptr bp in free list, compute address containing next and prior block address */
-#define NXTP(bp)            ((char *)(bp))
-#define PRVP(bp)            ((char *)(bp) + WSIZE)
+/* Given block ptr bp in free list, compute address containing 
+   successor & predecessor block address */
+#define SUCC(bp)            ((char *)(bp))
+#define PRED(bp)            ((char *)(bp) + WSIZE)
 
 /* Given block ptr bp, compute address of next and prev blocks */
 #define NEXT_BLKP(bp)       ((char *)(bp) + GET_SIZE(((char *)(bp) - WSIZE)))
 #define PREV_BLKP(bp)       ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE)))
 
 /* Given block ptr bp in free list, compute address of next and prev free list blocks */
-#define NEXT_FREP(bp)       (*((char *)(bp)))
-#define PREV_FREP(bp)       (*((char *)(bp) + WSIZE))
-
+#define SUCC_FREP(bp)       ((char *)GET_PTRP(SUCC(bp)))
+#define PRED_FREP(bp)       ((char *)GET_PTRP(PRED(bp)))
 
 static void * heap_list_p; 	/* points to prologue header  */
 static void * heap_list_e; 	/* points to epilogue header  */
@@ -94,8 +94,8 @@ static void * heap_start;	/* points to first block in heap */
 static void * free_list_r;	/* Root node of free list */
 /* Heap check variables */
 
-static size_t tot_payload_request;
-static size_t internal_frag;
+//static size_t tot_payload_request;
+//static size_t internal_frag;
 
 /* 
  *  removes the block at bp from the free list and rearranges the pointers
@@ -103,16 +103,18 @@ static size_t internal_frag;
  */
 static void remove_block(void *bp)
 {
-	char *list_p = GET_PTRP(PRVP(bp));         /* block prior to bp in free list */
-	char *third_bp = GET_PTRP(NXTP(bp));       /* pointer to block following bp in free list */
+
+	char *list_p = PRED_FREP(bp);         /* block prior to bp in free list */
+	char *third_bp = SUCC_FREP(bp);       /* pointer to block following bp in free list */
 	
 	if(list_p == NULL) 			          /* bp was first block in free list */
 		free_list_r = third_bp;           /* assign the root to point to block after bp */
 	else
-		PUT_PTRP(NXTP(list_p), third_bp); /* change node prior to bp to skip bp */
+		PUT_PTRP(SUCC(list_p), third_bp); /* change node prior to bp to skip bp */
 
 	if(third_bp != NULL) 		          /* bp not last node in free list */
-		PUT_PTR(PRVP(third_bp), list_p);  /* change block after bp's prev node pointer */
+		PUT_PTRP(PRED(third_bp), list_p); /* change block after bp's prev node pointer */
+	
 }
 
 /* 
@@ -121,23 +123,20 @@ static void remove_block(void *bp)
  */
 static void add_block(void *bp)
 {
-	char *list_p = free_list_r; /* first free block in list */
+	char *old_first = free_list_r; /* first free block in list */
 
-	if(list_p == NULL)			 /* empty list */
+	/* set up new first block in free list */
+	free_list_r = bp;
+	PUT_PTRP(PRED(bp), NULL);
+	
+	if(old_first == NULL)			 /* list was empty */
 		{
-			free_list_r = bp;
-			PUT_PTRP(NXTP(bp), NULL);
-			PUT_PTRP(PRVP(bp), NULL);
+			PUT_PTRP(SUCC(bp), NULL);
 			return;
 		}
 
-	while(NEXT_FREP(list_p) != NULL)
-		list_p = NEXT_FREP(list_p); /* walk the free list until at the last free block */
-
-	PUT_PTRP(NXTP(list_p), bp); 	/* pointer in last free block from null to bp */
-	
-	PUT_PTRP(NXTP(bp), NULL);	/* makes bp the last block in free list */
-	PUT_PTRP(PRVP(bp), list_p);	/* bp now has a pointer back to list_p  */
+	PUT_PTRP(SUCC(bp), old_first);
+	PUT_PTRP(PRED(old_first), bp);	/* bp now has a pointer back to list_p  */
 }
 
 /* 
@@ -192,6 +191,7 @@ static void * coalesce(void * bp)
  * scans entire heap and coalesces any adjacent free blocks
  * for use with deferred coalescing
  */
+/* 
 static void full_coalesce()
 {
 	char *bp;
@@ -202,6 +202,7 @@ static void full_coalesce()
 				bp = coalesce(bp);
 		}
 }
+*/
 
 /* 
  * Extends heap by the multiplicand of WSIZE and words argument.
@@ -253,7 +254,7 @@ static void * place(void *bp, size_t size)
 {
     size_t old_size = GET_SIZE(HDRP(bp));    /* size of block before splitting it */
     size_t split_size = old_size - size;	 /* size of leftover space after splitting */
-    size_t prev_alloc = GET_PREV_ALLOC(HDRP(bp));
+    size_t prev_alloc = GET_PREV_ALLOC(HDRP(bp)); /* not needed if immediate coalescing; always 2 */
 
 	char * next_blk;			/* pointer to next block */
 	int splitting = 1;			/* flag in case of splitting block */
@@ -273,6 +274,9 @@ static void * place(void *bp, size_t size)
 	/* assign newly allocated block header  */
 	PUT(HDRP(bp), PACK(size, prev_alloc, 1));
 
+	/* remove block from free list */
+	remove_block(bp);
+
 	next_blk = NEXT_BLKP(bp);
 
 	if(splitting)
@@ -281,8 +285,8 @@ static void * place(void *bp, size_t size)
 			PUT(HDRP(next_blk), PACK(split_size, 2, 0));
 			PUT(FTRP(next_blk), PACK(split_size, 2, 0));
 
-			/* split block added to end of free list */
-			
+			/* split block added to free list */
+			add_block(next_blk);
 			
 			/* dont forget block after the split to update prev_alloc */
 			next_blk = NEXT_BLKP(next_blk); 
@@ -298,7 +302,35 @@ static void * place(void *bp, size_t size)
 		PUT(FTRP(next_blk), PACK(next_blk_size, no_prev_split, 0));
 	return bp;
 }
+/* 
+ * prints a graphical image of the free list
+ */
+void mm_print_free()
+{
+	char *bp = free_list_r;
+	size_t size;
+	size_t alloc;
+	size_t prev_alloc;
+	char *succ;
+	char *pred;
+	
+	while(bp != NULL)
+		{
+			size = GET_SIZE(HDRP(bp));
+			alloc = GET_ALLOC(HDRP(bp));
+			prev_alloc = GET_PREV_ALLOC(HDRP(bp));
+			succ = SUCC_FREP(bp);
+			pred = PRED_FREP(bp);
+			
+			printf("\n[Head-- PrevAll = %d -- All = %d ]", prev_alloc, alloc);
+			printf("[ Successor = %#lx ][Predecessor = %#lx ]", (unsigned long)succ, (unsigned long)pred);
+			printf("[ ---- BLOCK SIZE %d  ---- ]\n", size);
 
+			
+			bp = SUCC_FREP(bp);
+		}
+	
+}
 void myprintblock(char * bp)
 {
 	size_t prev_allocH = GET_PREV_ALLOC(HDRP(bp));
@@ -322,10 +354,12 @@ void myprintblock(char * bp)
  */
 void mycheckblock(char * bp)
 {
+
+	printf("\n\n\n\n\n ");
     size_t sizeH = GET_SIZE(HDRP(bp));
     size_t allocH = GET_ALLOC(HDRP(bp));
 	size_t prev_alloc = GET_PREV_ALLOC(HDRP(bp));
-	
+	mm_print_free();
 	if(!allocH)
 		{
 			size_t sizeF = GET_SIZE(FTRP(bp));
@@ -360,18 +394,18 @@ void mycheckblock(char * bp)
 
 void mm_check()
 {
-    size_t heap_size = mem_heapsize(); /* number of bytes in heap */
+    //size_t heap_size = mem_heapsize(); /* number of bytes in heap */
     int total_blocks = 1;			/* all blocks in  */
     int free_blocks = 0;		    /*  */
 	char *bp;
-	size_t payloads = tot_payload_request;
+	//size_t payloads = tot_payload_request;
 
     for (bp = heap_list_p; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp))
 	{
 	    if(!GET_ALLOC(HDRP(bp)))
 			free_blocks++;
 			
-		//		myprintblock(bp);
+		myprintblock(bp);
 	    mycheckblock(bp);
 		total_blocks++;
 	}
@@ -380,7 +414,7 @@ void mm_check()
 	// heap_list_e, heap_size);
 	//    printf("Total free blocks = %d\nTotal blocks = %d\n", free_blocks, total_blocks);
 
-	//	sleep(1);    
+		sleep(1);    
 }
 
 /* 
@@ -403,11 +437,7 @@ int mm_init(void)
 	if((heap_start = extend_heap(CHUNKSIZE/WSIZE)) == NULL)
 		return -1;
 
-	free_list_r = heap_start; 	/* sets root of free list to be at the first block */
-
-	/* create the null pointers to establish free list */
-	PUT_PTRP(NXTP(heap_start), NULL);
-	PUT_PTRP(PRVP(heap_start), NULL);
+	add_block(heap_start);
 	
     return 0;
 }
@@ -502,11 +532,11 @@ void mm_free(void *bp)
     PUT(HDRP(bp), PACK(size, prev_alloc, 0));
     PUT(FTRP(bp), PACK(size, prev_alloc, 0));
 
-	/* set pointers in the new free block to be in the free list */
-	
-	
 	/* if commented out, using deferred coalescing */
-	coalesce(bp);
+	bp = coalesce(bp);
+
+	/* set pointers in the new free block to be in the free list */
+	add_block(bp);
 }
 
 /*
