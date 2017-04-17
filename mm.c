@@ -204,12 +204,14 @@ static void * coalesce(void * bp)
 	
 	if(prev_blk_alloc && next_blk_alloc)        /* case 1: bp is in-between 2 used blks */
 		{
+			//			printf("\ncoalesce case 1\n");
 			/* nothing needs to be changed, can freely add block bp to free list */
 			add_block(bp);
 		}
 	
 	else if(!prev_blk_alloc && next_blk_alloc)	/* case 2: free prior blk but used next blk */
 		{
+			//			printf("\ncoalesce case 2\n");
 			prev_blk = PREV_BLKP(bp);
 			
 			/* task 1: nothing changes in singly linked list, node just gets bigger */
@@ -226,21 +228,31 @@ static void * coalesce(void * bp)
 	
 	else if(prev_blk_alloc && !next_blk_alloc)  /* case 3: used prior blk but free next blk */
 		{
+			//			printf("\ncoalesce case 3\n");			
 			/* tast 1: change location of node pointers */
-			PUT(PRED(bp), NULL);
-			PUT(SUCC(bp), NULL);
+			//PUT(PRED(bp), NULL);
+			//PUT(SUCC(bp), NULL);
 
-			PUT(PRED(bp), PRED_FREP(next_blk));
-			PUT(SUCC(bp), SUCC_FREP(next_blk));
+			//PUT(PRED(bp), PRED_FREP(next_blk));
+			//PUT(SUCC(bp), SUCC_FREP(next_blk));
+			/* big error: forgot to change address of surrounding nodes to be the new location. */
+			/* easier to just remove the following free node and add the new node. */
 
+			remove_block(next_blk);
+			
+			
 			/* task 2: change header & footer in bp */
 			bp_size += GET_SIZE(HDRP(next_blk));
 			PUT(HDRP(bp), PACK(bp_size, 2, 0));
 			PUT(FTRP(bp), PACK(bp_size, 2, 0));
+
+			/* finish task 1 */
+			add_block(bp);
 		}
 	
 	else						                /* case 4: both next blk and prior blk are free */
 		{
+			//			printf("\ncoalesce case 4\n");			
 			prev_blk = PREV_BLKP(bp);
 			
 			/* task 1: stitch out the next block, combine the latter two blocks into the earliest */
@@ -294,15 +306,15 @@ static void * extend_heap(size_t words)
  */
 static void * find_fit(size_t size)
 {
-	char *bp;// = GET_ROOT(free_list_r, 0);
+	char *bp = GET_ROOT(free_list_r, 0);
 	//mm_print_free();
-	//	while(bp != NULL)
-	for(bp = heap_list_p; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp))
+		while(bp != NULL)
+			//for(bp = heap_list_p; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp))
 		{
 			if(!GET_ALLOC(HDRP(bp)) && (size < GET_SIZE(HDRP(bp))))
 					return bp;
 
-			//		bp = SUCC_FREP(bp);
+					bp = SUCC_FREP(bp);
 		}
 
     return NULL; 		/* no blocks available */
@@ -368,8 +380,8 @@ static void * place(void *bp, size_t size)
  */
 static void mm_print_free()
 {
-	/* 
-	char *bp = free_list_r;
+	
+	char *bp = GET_ROOT(free_list_r, 0);
 	size_t size;
 	size_t alloc;
 	size_t prev_alloc;
@@ -389,11 +401,13 @@ static void mm_print_free()
 			printf(" Successor = %#lx ][Predecessor = %#lx ]", (unsigned long)succ, (unsigned long)pred);
 			printf("[ ---- BLOCK SIZE %d  ---- ]\n", size);
 
+			if(succ != NULL && succ == pred)
+				sleep(10);
 			i++;
 			bp = SUCC_FREP(bp);
 		}
 	printf("\n\n There are %d nodes in free list\n", i);
-	 NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNnnnn*/
+	
 
 }
 static void mm_print_block(char * bp)
@@ -486,13 +500,13 @@ static void mm_check()
 	    mm_check_block(bp, total_blocks);
 		total_blocks++;
 	}
-	//		mm_print_free();
+	//			mm_print_free();
 	//	printf("\nFirst byte heap = %p    Last byte heap = %p    Size of heap = %d\n", heap_list_p,
 	// heap_list_e, heap_size);
 	//		printf("Total free blocks = %d\nTotal blocks = %d\n", free_blocks, total_blocks);
 
 
-		//	sleep(1);    
+			//			sleep(1);    
 }
 
 /* 
@@ -552,7 +566,7 @@ void *mm_malloc(size_t size)
 	if((bp = find_fit(adjust_size)) != NULL)
 		{
 			place(bp, adjust_size);
-			mm_check();
+			//		mm_check();
 			return bp;
 		}
 
@@ -562,7 +576,7 @@ void *mm_malloc(size_t size)
 		return NULL;
 	
 	place(bp, adjust_size);
-	mm_check();
+	//	mm_check();
 	return bp;
 }
 
@@ -607,15 +621,15 @@ void mm_free(void *bp)
  */
 void *mm_realloc(void *ptr, size_t size)
 {
-	/* 
+	
 	if(ptr == NULL)
 		return mm_malloc(size);
 	if(size == 0)
 		{
 			mm_free(ptr);
-			return;
+			return NULL;
 		}
-		 */
+		 
 	/* ptr must have been returned by an earlier call, so change the size of
      * the block to be size and return addy of the new block. 
 	 * contents of the new block are same as old ptr block up to min(oldsize, size)
