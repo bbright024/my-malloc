@@ -1,5 +1,4 @@
 *
 !.gitignore
-!mm*.c
-!mm2.c
+!mm.c
 !README

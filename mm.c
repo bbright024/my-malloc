@@ -49,7 +49,7 @@ team_t team = {
 #define CHUNKSIZE  (1<<8)	    /* Extend heap by this amount (bytes) */
 #define MIN_SIZE   (4 * WSIZE)	/* Minimum block size  */
 #define SPLIT_MIN  (1<<6)	/* Minimum split block size */
-#define TOT_LISTS  20			/* Total number of explicit lists */
+#define TOT_LISTS  16		/* Total number of explicit lists */
 #define MIN_LIST_SIZE (1)	/* The smallest power of 2 list */
 #define MAX_LIST_SIZE ((MIN_LIST_SIZE)<<(TOT_LISTS)) /* Maximum power of 2 in the list, anything higher in here */
 #define P_AND_E_SIZE  (3)		   /* Total words of the prologue and epilogue */
