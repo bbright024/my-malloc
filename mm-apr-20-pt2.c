@@ -44,13 +44,13 @@ team_t team = {
 /* 
  * Basic constants and macros 
  */
-#define WSIZE      8 	     	/* Word and header/footer size (bytes) */
+#define WSIZE      8  	     	/* Word and header/footer size (bytes) */
 #define DSIZE      16 		    /* Double word size (bytes) */
 #define CHUNKSIZE  (1<<8)	    /* Extend heap by this amount (bytes) */
 #define MIN_SIZE   (4 * WSIZE)	/* Minimum block size  */
 #define SPLIT_MIN  (1<<6)	/* Minimum split block size */
-#define TOT_LISTS  20			/* Total number of explicit lists */
-#define MIN_LIST_SIZE (1)	/* The smallest power of 2 list */
+#define TOT_LISTS  16			/* Total number of explicit lists */
+#define MIN_LIST_SIZE ((SPLIT_MIN)<<2)	/* The smallest power of 2 list */
 #define MAX_LIST_SIZE ((MIN_LIST_SIZE)<<(TOT_LISTS)) /* Maximum power of 2 in the list, anything higher in here */
 #define P_AND_E_SIZE  (3)		   /* Total words of the prologue and epilogue */
 
@@ -135,11 +135,14 @@ void *seg_free_lists[TOT_LISTS];
  */
 static int get_list(size_t size)
 {
-	short i = 0;
-	while( (size > 0) && (i < (TOT_LISTS-1)) )
+	int i = 0;
+	int x = size;//MIN_LIST_SIZE;
+
+	while( (x > 0) && (i < (TOT_LISTS-1)) )
+	//	for(i = 0; (x < size) && ; i++);
 		{
-			size = size & ~(1<<i);
 			i++;
+			x /= 2;
 		}
 	return i;
 }
@@ -190,77 +193,22 @@ static void remove_block(void *bp)
  */
 static void add_block(void *bp)
 {
-	
 	int list_num = get_list(GET_SIZE(HDRP(bp)));
 
-	char* new_bp = bp;
 	/* zero out space where pointers will be placed in bp */
 	PUT(PRED(bp), NULL);
 	PUT(SUCC(bp), NULL);
 
 	char *old_root = GET_ROOT(free_list_r, list_num);
-	
+
+	SET_ROOT(free_list_r, list_num, bp);
+
 	if(old_root == NULL) 		/* list was empty */
-		{
-			SET_ROOT(free_list_r, list_num, bp);
-			return;
-		}
-	else if(old_root > bp)
-		{
-			SET_ROOT(free_list_r, list_num, bp);
-			PUT(SUCC(bp), old_root);
-			PUT(PRED(old_root), bp);
-			return;
-		}
-	else if(SUCC_FREP(old_root) == NULL) /* 1 node in list */
-		{
-			PUT(PRED(bp), old_root);
-			PUT(SUCC(old_root), bp);
-			return;
-		}
+		return;
 
-	
-	char *searcher = old_root;
-	while(searcher < new_bp && SUCC_FREP(searcher) != NULL )
-		{
-			searcher = SUCC_FREP(searcher);
-		}
-
-	char *pred = PRED_FREP(searcher);
-	char *succ = SUCC_FREP(searcher);
-
-	if(succ == NULL)			/* searcher is last node of list */
-		{
-			if(new_bp > searcher)
-				{
-					PUT(SUCC(searcher), new_bp);
-					PUT(PRED(new_bp), searcher);
-				}
-			else
-				{
-					PUT(PRED(searcher), new_bp);
-					PUT(SUCC(new_bp), searcher);
-					PUT(PRED(new_bp), pred);
-					PUT(SUCC(pred), new_bp);
-				}
-		}
-	
-	else 						/* searcher is a mid node */
-		{
-			PUT(SUCC(new_bp), searcher);
-			PUT(PRED(new_bp), pred);
-			PUT(SUCC(pred), new_bp);
-			PUT(PRED(searcher), new_bp);
-		}
-
-		/* {
-
-}
-	char *pred = PRED_FREP(searcher);
-	
-	PUT(SUCC(bp), searcher);
-	PUT(PRED(searcher), bp);
-	 */
+	/* stitch the new root to the old root */
+	PUT(SUCC(bp), old_root);
+	PUT(PRED(old_root), bp);
 }
 
 /* 
@@ -789,69 +737,177 @@ void *mm_realloc(void *bp, size_t size)
 			mm_free(bp);
 			return NULL;
 		}
-
-	void *new_bp = bp;
+	void *new_bp;		 
+	void *old_bp = bp;
 	size_t old_size = GET_SIZE(HDRP(bp));
-	size_t adj_size = adjust_size(size);
-	size_t old_prev_alloc = GET_PREV_ALLOC(HDRP(bp));
-	
-	void *next_bp = NEXT_BLKP(bp);
-	size_t next_alloc = GET_ALLOC(HDRP(next_bp));
-	size_t next_size = GET_SIZE(HDRP(next_bp));
-	
-	size_t copy_size;
-	size_t combo_size;
-	char *split_bp;
+	//	size_t new_size;
+
 	size_t split_size;
+	size_t adj_size;
+	char *split_bp;
 
-	if(adj_size == old_size)
-		return bp;
-	/* case 1: expanding */
-	if(adj_size > old_size)
+	void *next_bp;
+	size_t next_alloc;
+	size_t next_size;
+	size_t combo_size;
+	size_t copy_size;
+
+	next_bp = NEXT_BLKP(bp);
+	next_alloc = GET_ALLOC(HDRP(next_bp));
+	next_size = GET_SIZE(HDRP(next_bp));
+
+	
+	/* turn size into a value that is allowed to allocate a block */
+	adj_size = adjust_size(size);
+
+	/* case 1: equality */
+	if((0) && adj_size == old_size)
 		{
-			combo_size = next_size + old_size;
-			if(!next_alloc && combo_size > adj_size)
-				{
-					remove_block(next_bp);
-					PUT(HDRP(bp), PACK(combo_size, old_prev_alloc, 1));
-					next_bp = NEXT_BLKP(bp);
-					next_size = GET_SIZE(HDRP(next_bp));
-					PUT(HDRP(NEXT_BLKP(bp)), PACK(next_size, 2, 1));
-					
-				}
-			else
-				{
-					new_bp = mm_malloc(size);
-					if(new_bp == NULL)
-						return NULL;
-					
-					memcpy(new_bp, bp, size);
-					mm_free(bp);
-					return new_bp;
-				}
+			return bp;
 		}
-	/* case 2: shrinking */
-	/* will put split off block into the next block */
-	else if((0) && !next_alloc)
+
+	/* case 2: truncation. can split block if split is big enough. */
+	else if ((0) && old_size > adj_size)
+		
 		{
 
+			new_bp = mm_malloc(size);
+			if(new_bp == NULL)
+				return NULL;
+			
+			memcpy(new_bp, old_bp, size);
+			mm_free(old_bp);
+			return new_bp;
+
+
+			/* honestly, in the trace files given, this never happens. might someday though. */
+			/* 
 			split_size = old_size - adj_size;
-			if(split_size >(1<<30))
+			if(split_size > SPLIT_MIN)
+				{
+					PUT(HDRP(bp), PACK(adj_size, GET_PREV_ALLOC(bp), 1));
+					split_bp = NEXT_BLKP(bp);
+					PUT(HDRP(split_bp), PACK(split_size, 2, 1));
+
+					PUT(FTRP(split_bp), PACK(split_size, 2, 0));
+					CHANGE_PREV(HDRP(NEXT_BLKP(split_bp)), 0);
+
+					if(!GET_ALLOC(HDRP(NEXT_BLKP(split_bp))))
+						coalesce(split_bp);
+					else
+						add_block(split_bp);
+
+					return bp;
+				}
+
+			return bp;
+			 */
+		}
+	
+	/* following 3 cases are expansions, because adj_size > old size. */
+	/* case 3: easiest. next block is free and big enough. */
+	else if(!next_alloc && ((next_size + old_size) > adj_size)) 
+		{
+
+			combo_size = next_size + old_size;
+			remove_block(next_bp);
+
+			split_size = combo_size - adj_size;
+				
+
+
+			if(split_size > 64)
 				{
 					PUT(HDRP(bp), PACK(adj_size, GET_PREV_ALLOC(HDRP(bp)), 1));
 					split_bp = NEXT_BLKP(bp);
-					PUT(HDRP(split_bp), PACK(split_size, 2, 1));
-					mm_free(split_bp);
+					PUT(HDRP(split_bp), PACK(split_size, 2, 0));
+					PUT(FTRP(split_bp), PACK(split_size, 2, 0));
+					CHANGE_PREV(HDRP(NEXT_BLKP(split_bp)), 0);
+
+					add_block(split_bp);
+					return bp;
+				}
+				
+			else
+				{
+					PUT(HDRP(bp), PACK(combo_size, GET_PREV_ALLOC(HDRP(bp)), 1));
+					next_bp = NEXT_BLKP(bp);
+					next_size = GET_SIZE(HDRP(next_bp));
+					PUT(HDRP(next_bp), PACK(next_size, 2, 1));
+					return bp;
+				}
+			/* 
+
+			PUT(HDRP(bp), PACK(combo_size, GET_PREV_ALLOC((HDRP(bp))), 1));
+			next_bp = NEXT_BLKP(bp);
+			PUT(HDRP(next_bp), PACK(GET_SIZE(HDRP(next_bp)), 2, 1));
+							mm_print_block(bp);
+							mm_print_block(next_bp);
+							printf("\n\n\n\n\n");
+					//		CHANGE_PREV(HDRP(NEXT_BLKP(bp)), 2);
+					//}
+
+			return bp;
+			 */
+		}
+
+	/* case 4: free prev block & is big enough*/
+	else if((0) && !GET_PREV_ALLOC(HDRP(bp)) && (GET_SIZE(HDRP(PREV_BLKP(bp))) + old_size) > adj_size)
+		{
+			new_bp = PREV_BLKP(bp);
+			combo_size = GET_SIZE(HDRP(new_bp)) + old_size;
+			/* remove header size from size of bp to copy proper amount. */
+			copy_size = old_size - WSIZE;
+			printf("\n\ncase4 copysize = %d  oldsize = %d  adjsize = %d  combosize = %d\n",
+				   copy_size, old_size, adj_size, combo_size);
+			
+
+			remove_block(new_bp);
+
+
+			PUT(HDRP(new_bp), PACK(combo_size, 2, 1));
+			memcpy(new_bp, old_bp, size);
+
+			/* sizing data determines split */
+			
+			split_size = combo_size - adj_size;
+
+
+			return new_bp;
+
+			if(split_size > SPLIT_MIN)
+				{
+					/* split the internal frag and add to free list. */
+					PUT(HDRP(new_bp), PACK(adj_size, 2, 1));
+					split_bp = NEXT_BLKP(new_bp);
+					PUT(HDRP(split_bp), PACK(split_size, 2, 0));
+					PUT(FTRP(split_bp), PACK(split_size, 2, 0));
+
+					/* coalesce only if the next block is free as well. */
+					if(!GET_ALLOC(HDRP(NEXT_BLKP(split_bp))))
+						coalesce(split_bp);
+					else
+						add_block(split_bp);
+
+					return new_bp;
+				}
+			else
+				{
+					/* no split, combining blocks. */
+					PUT(HDRP(new_bp), PACK(combo_size, 2, 1));
+					return new_bp;
 				}
 		}
 
+	/* case 5: have to allocate a new block and copy over to it  */
 
+	new_bp = mm_malloc(size);
+	if(new_bp == NULL)
+		return NULL;
+	
+	memcpy(new_bp, old_bp, size);
+	mm_free(old_bp);
 	return new_bp;
 
-
-	/* 
-	
-
-	 */
 }
 
